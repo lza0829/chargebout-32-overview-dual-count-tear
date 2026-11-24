@@ -1,14 +1,13 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
 
-const surface_panel = true
 export default function Guns() {
   const [list, setList] = useState([])
   useEffect(() => {
     api.枪线().then(setList)
   }, [])
   return (
-    <div className={surface_panel ? "page" : "page"}>
+    <div className="page">
       <h2>枪线</h2>
       <p className="lead">各桩枪口可用与占用态。</p>
       <div className="panel">

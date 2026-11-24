@@ -1,6 +1,5 @@
 from __future__ import annotations
 from datetime import datetime, timedelta
-from app.services import dual_surface
 
 from app.db import db, row_dict, rows
 from app.services import counters
@@ -45,8 +44,13 @@ def is_day_sealed(conn, day: str | None = None) -> bool:
 
 
 def overview(conn) -> dict:
-    """总览仪表：钉桩桩数与充电中会话数由选定口径（臂 A 谓词）重放推导，读即重放。"""
-    dual = counters.replay_dual_counters(conn)
+    """总览仪表：钉桩桩数与充电中会话数由选定口径（臂 A 谓词）重放推导，读即重放。
+
+    「已对齐」只在四面对照（会话集合 ∪ 占用列 ∪ 审计重放）全部一致时为 True；
+    不一致时如实返回 对齐=False 与 拧花 列表，绝不用任何缓存/快照/旁路数字刷绿两格。
+    """
+    report = counters.consistency_report(conn)
+    dual = report["总览双格"]
     sess = rows(conn.execute("SELECT status, COUNT(*) AS n FROM sessions GROUP BY status").fetchall())
     sess_map = {s["status"]: s["n"] for s in sess}
     cond = rows(
@@ -61,12 +65,15 @@ def overview(conn) -> dict:
         "SELECT COALESCE(SUM(amount),0) AS a FROM sessions WHERE business_day=? AND status='已关账'",
         (today(),),
     ).fetchone()["a"]
+    idle = total_piles - dual["钉桩桩数"] - cond_map.get("故障", 0) - cond_map.get("维护", 0)
     return {
-        "桩位空闲": total_piles - dual["钉桩桩数"] - cond_map.get("故障", 0) - cond_map.get("维护", 0),
+        "桩位空闲": max(0, idle),
         "桩位占用": dual["钉桩桩数"],
         "桩位故障": cond_map.get("故障", 0),
         "桩位维护": cond_map.get("维护", 0),
         "充电中": dual["充电中会话数"],
+        "钉桩桩数": dual["钉桩桩数"],
+        "充电中会话数": dual["充电中会话数"],
         "结算中": sess_map.get("结算中", 0),
         "已关账": sess_map.get("已关账", 0),
         "已超时": sess_map.get("已超时", 0),
@@ -76,7 +83,11 @@ def overview(conn) -> dict:
         "营业日": today(),
         "充日已封印": is_day_sealed(conn),
         "双计数口径": counters.PREDICATE_ID,
-        "拧花": counters.consistency_report(conn)["拧花"],
+        "已对齐": report["对齐"],
+        "对齐": report["对齐"],
+        "拧花": report["拧花"],
+        "证据重放": report["重放"],
+        "证据": report["证据"],
     }
 
 
@@ -172,10 +183,4 @@ def session_detail(conn, session_id: int):
     d["脉冲"] = pulses
     d["事件"] = events
     return d
-
-_overview_impl = overview
-
-
-def overview(conn):
-    return dual_surface.overlay_overview(_overview_impl(conn), conn)
 

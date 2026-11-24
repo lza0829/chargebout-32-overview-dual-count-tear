@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
 
-const surface_panel = true
 export default function OpenSession() {
   const [piles, setPiles] = useState([])
   const [guns, setGuns] = useState([])
@@ -37,7 +36,7 @@ export default function OpenSession() {
     }
   }
   return (
-    <div className={surface_panel ? "page" : "page"}>
+    <div className="page">
       <h2>开会话</h2>
       <p className="lead">选空闲桩与可用枪，开出一笔充电会话并占住桩位。</p>
       <div className="panel">

@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
 
-const surface_panel = true
 export default function DaySeal() {
   const [d, setD] = useState(null)
   const [msg, setMsg] = useState('')
@@ -27,7 +26,7 @@ export default function DaySeal() {
   }
   if (!d) return null
   return (
-    <div className={surface_panel ? "page" : "page"}>
+    <div className="page">
       <h2>充日封印</h2>
       <p className="lead">营业日封印后默认禁止新开充；未结会话数仅供参考。</p>
       <div className="panel">

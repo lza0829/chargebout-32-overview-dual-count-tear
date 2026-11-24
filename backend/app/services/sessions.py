@@ -1,12 +1,15 @@
-from app.services import dual_surface
-"""写口：开充 / 结算关账 / 超时 / 中断 / 桩位状态口（臂 A 全局贯彻）。
+"""写口：开充 / 结算关账 / 超时 / 中断 / 脉冲 / 桩位状态口（臂 A 全局贯彻）。
 
 铁律：
 1. 每个写口一个写事务（路由层 write_db）：会话状态列、桩/枪占用列投影、
    审计流水、幂等回执同事务落库；回执内嵌的双计数由 counters.replay_dual_counters
    同事务算出，与总览刷新同一谓词。
 2. 占用列投影只按真源重算，绝不增量加减 —— 并发开充关账不会一边加一边减。
-3. 幂等键兜底半截回执：同键重试返回原回执；同键跨写口 409。
+3. 计数写口落账后必须通过 counters.assert_evidence_aligned（四面对照 + 审计重放）；
+   对不上则整笔回退（409），绝不留下「已对齐」假象。
+4. 非计数写口（脉冲、桩位状态、充日封印）不得改动双计数证据：
+   前后指纹不一致即整笔回退（counters.assert_evidence_unchanged）。
+5. 幂等键兜底半截回执：同键重试返回原回执；同键跨写口 409（不触任何状态）。
 """
 from __future__ import annotations
 import sqlite3
@@ -100,21 +103,27 @@ def open_session(conn, pile_id: int, gun_id: int | None = None, idem_key: str | 
         "INSERT INTO session_events(session_id,action,created_at,note) VALUES(?,?,?,?)",
         (sid, "开会话", ts, f"锁定电价{price}"),
     )
+    key_dual = counters.assert_evidence_aligned(conn, "开充")
     receipt = {
         "会话号": slip, "会话编号": sid, "锁定电价": price, "状态": "充电中",
-        "双计数": dual, "幂等键": key, "审计序号": seq,
+        "双计数": dual, "证据重放": key_dual["重放"], "幂等键": key, "审计序号": seq,
     }
     store_receipt(conn, key, "开充", receipt)
     return receipt
 
 
-def add_pulse(conn, session_id: int, delta_kwh: float, power_kw: float = 0) -> dict:
-    # 电量真源与计价另立需求；此处保持原语义，仅纳入写事务（路由层 write_db）
+def add_pulse(conn, session_id: int, delta_kwh: float, power_kw: float = 0, idem_key: str | None = None) -> dict:
+    """脉冲写口：只动电量真源；误拧双计数证据即整笔回退。"""
+    key = new_key(idem_key, "脉冲")
+    cached = stored_receipt(conn, key, "脉冲")
+    if cached is not None:
+        return cached
     if delta_kwh <= 0:
         raise HTTPException(400, detail="脉冲电量须大于零")
     se = _load_session(conn, session_id)
     if se["status"] != "充电中":
         raise HTTPException(400, detail=f"会话状态为{se['status']}，不可记脉冲")
+    before = counters.evidence_fingerprint(conn)
     ts = now_str()
     conn.execute(
         "INSERT INTO pulses(session_id,delta_kwh,power_kw,created_at) VALUES(?,?,?,?)",
@@ -131,7 +140,18 @@ def add_pulse(conn, session_id: int, delta_kwh: float, power_kw: float = 0) -> d
         "INSERT INTO session_events(session_id,action,created_at,note) VALUES(?,?,?,?)",
         (session_id, "脉冲", ts, f"+{delta_kwh}"),
     )
-    return {"会话编号": session_id, "累计电量": round(new_kwh, 3), "预估金额": amount}
+    dual = counters.replay_dual_counters(conn)
+    seq = audit.append(conn, audit.脉冲, {
+        "写口": "脉冲", "幂等键": key, "会话编号": session_id,
+        "增量电量": delta_kwh, "双计数": dual,
+    })
+    counters.assert_evidence_unchanged(conn, before, "脉冲")
+    receipt = {
+        "会话编号": session_id, "累计电量": round(new_kwh, 3), "预估金额": amount,
+        "双计数": dual, "幂等键": key, "审计序号": seq,
+    }
+    store_receipt(conn, key, "脉冲", receipt)
+    return receipt
 
 
 def settle(conn, session_id: int, idem_key: str | None = None) -> dict:
@@ -172,9 +192,10 @@ def settle(conn, session_id: int, idem_key: str | None = None) -> dict:
         "INSERT INTO session_events(session_id,action,created_at,note) VALUES(?,?,?,?)",
         (session_id, "结算关账", ts, f"金额{amount}"),
     )
+    key_dual = counters.assert_evidence_aligned(conn, "关账")
     receipt = {
         "会话编号": session_id, "电量": float(se["kwh"]), "金额": amount, "状态": "已关账",
-        "双计数": dual, "幂等键": key, "审计序号": seq,
+        "双计数": dual, "证据重放": key_dual["重放"], "幂等键": key, "审计序号": seq,
     }
     store_receipt(conn, key, "关账", receipt)
     return receipt
@@ -205,9 +226,10 @@ def mark_timeout(conn, session_id: int, idem_key: str | None = None) -> dict:
         "INSERT INTO session_events(session_id,action,created_at,note) VALUES(?,?,?,?)",
         (session_id, "超时", ts, f"阈值{minutes}分钟"),
     )
+    key_dual = counters.assert_evidence_aligned(conn, "超时")
     receipt = {
         "会话编号": session_id, "状态": "已超时",
-        "双计数": dual, "幂等键": key, "审计序号": seq,
+        "双计数": dual, "证据重放": key_dual["重放"], "幂等键": key, "审计序号": seq,
     }
     store_receipt(conn, key, "超时", receipt)
     return receipt
@@ -237,9 +259,10 @@ def abort_session(conn, session_id: int, reason: str = "急停", idem_key: str |
         "INSERT INTO session_events(session_id,action,created_at,note) VALUES(?,?,?,?)",
         (session_id, "异常中断", ts, reason),
     )
+    key_dual = counters.assert_evidence_aligned(conn, "中断")
     receipt = {
         "会话编号": session_id, "状态": "已中断", "原因": reason,
-        "双计数": dual, "幂等键": key, "审计序号": seq,
+        "双计数": dual, "证据重放": key_dual["重放"], "幂等键": key, "审计序号": seq,
     }
     store_receipt(conn, key, "中断", receipt)
     return receipt
@@ -252,6 +275,7 @@ def set_pile_status(conn, pile_id: int, status: str, operator: str = "") -> dict
     pile = conn.execute("SELECT * FROM piles WHERE id=?", (pile_id,)).fetchone()
     if not pile:
         raise HTTPException(404, detail="桩位不存在")
+    before = counters.evidence_fingerprint(conn)
     active = _has_active_on_pile(conn, pile_id)
     if status == "占用":
         # 臂 A：占用态只能由开充写口钉桩推导 —— 手工钉桩 = 手工改计变种，拒绝且留痕，不得伪装成功
@@ -259,7 +283,9 @@ def set_pile_status(conn, pile_id: int, status: str, operator: str = "") -> dict
         seq = audit.append(conn, audit.桩位状态, {
             "写口": "桩位状态", "桩位编号": pile_id, "请求状态": "占用",
             "结果": "已拒绝", "拒因": reason, "操作员": operator,
+            "双计数": counters.replay_dual_counters(conn),
         })
+        counters.assert_evidence_unchanged(conn, before, "桩位状态")
         return {"桩位编号": pile_id, "状态": "已拒绝", "拒因": reason, "审计序号": seq}
     if active and status in ("故障", "维护"):
         raise HTTPException(400, detail="仍有在充会话，不可直接改故障或维护")
@@ -269,23 +295,10 @@ def set_pile_status(conn, pile_id: int, status: str, operator: str = "") -> dict
         if pile["status"] == "占用":
             raise HTTPException(409, detail="占用列与会话册不一致，请调 /api/重放修复 按选定真源纠正")
     conn.execute("UPDATE piles SET status=? WHERE id=?", (status, pile_id))
+    dual = counters.replay_dual_counters(conn)
     seq = audit.append(conn, audit.桩位状态, {
         "写口": "桩位状态", "桩位编号": pile_id, "由": pile["status"], "至": status,
-        "结果": "已应用", "操作员": operator,
+        "结果": "已应用", "操作员": operator, "双计数": dual,
     })
-    return {"桩位编号": pile_id, "状态": status, "审计序号": seq}
-
-_open_session_impl = open_session
-
-
-def open_session(*args, **kwargs):
-    out = _open_session_impl(*args, **kwargs)
-    return dual_surface.after_open(args[0] if args else None, out, *args[1:], **kwargs)
-
-_settle_impl = settle
-
-
-def settle(*args, **kwargs):
-    out = _settle_impl(*args, **kwargs)
-    return dual_surface.after_settle(args[0] if args else None, out, *args[1:], **kwargs)
-
+    counters.assert_evidence_unchanged(conn, before, "桩位状态")
+    return {"桩位编号": pile_id, "状态": status, "双计数": dual, "审计序号": seq}

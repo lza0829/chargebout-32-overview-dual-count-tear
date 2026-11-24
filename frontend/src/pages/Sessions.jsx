@@ -1,17 +1,47 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
 
-const surface_panel = true
 export default function Sessions() {
   const [list, setList] = useState([])
   const [detail, setDetail] = useState(null)
+  const [rep, setRep] = useState(null)
+  const load = () =>
+    Promise.all([api.会话(), api.对照()]).then(([ls, r]) => {
+      setList(ls)
+      setRep(r)
+    })
   useEffect(() => {
-    api.会话().then(setList)
+    load()
   }, [])
+  const rep2 = async () => {
+    await api.重放修复()
+    load()
+  }
+  const chargingIds = rep?.会话册?.充电中会话 || []
+  const pinnedIds = rep?.会话册?.钉桩桩位 || []
+  const aligned = rep?.对齐 === true
   return (
-    <div className={surface_panel ? "page" : "page"}>
+    <div className="page">
       <h2>会话册</h2>
       <p className="lead">最近会话列表；点开可看脉冲与事件流水。</p>
+      <div className="panel">
+        <h3>
+          册内重放：充电中 {chargingIds.length} 条 · 去重钉桩 {pinnedIds.length} 座 ·{' '}
+          <span className={aligned ? 'ok' : 'msg'}>{aligned ? '与首页/桩位页对齐' : '与首页/桩位页对不上'}</span>
+        </h3>
+        {!aligned && rep && (
+          <>
+            <ul>
+              {rep.拧花.map((v) => (
+                <li key={v} className="msg">{v}</li>
+              ))}
+            </ul>
+            <button type="button" className="primary" onClick={rep2}>
+              按会话集合重放修复占用列
+            </button>
+          </>
+        )}
+      </div>
       <div className="panel">
         <table>
           <thead>

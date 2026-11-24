@@ -11,7 +11,13 @@ async function req(path, opts = {}) {
     data = { detail: text }
   }
   if (!r.ok) {
-    const msg = data?.detail || data?.消息 || text || '请求失败'
+    const d = data?.detail
+    let msg
+    if (d && typeof d === 'object') {
+      msg = [d.原因, d.结果, ...(d.拧花 || []), ...(d.变化 || [])].filter(Boolean).join('；') || JSON.stringify(d)
+    } else {
+      msg = d || data?.消息 || text || '请求失败'
+    }
     throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg))
   }
   return data
@@ -20,6 +26,9 @@ async function req(path, opts = {}) {
 export const api = {
   健康: () => req('/健康'),
   总览: () => req('/总览'),
+  对照: () => req('/对照'),
+  重放修复: () => req('/重放修复', { method: 'POST' }),
+  审计: (类别) => req(类别 ? `/审计?类别=${encodeURIComponent(类别)}` : '/审计'),
   站点: () => req('/站点'),
   桩位: (站点编号) => req(站点编号 ? `/桩位?站点编号=${站点编号}` : '/桩位'),
   枪线: (桩位编号) => req(桩位编号 ? `/枪线?桩位编号=${桩位编号}` : '/枪线'),

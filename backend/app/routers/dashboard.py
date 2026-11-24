@@ -33,7 +33,3 @@ def post_replay_repair():
 def get_audit(类别: str | None = None, 条数: int = 200):
     with db() as conn:
         return audit_svc.list_audit(conn, 类别, 条数)
-
-def _surface_router_overview() -> dict:
-    return {"panel": "overview", "ready": True}
-

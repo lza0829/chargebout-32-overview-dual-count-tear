@@ -17,6 +17,7 @@ class OpenIn(BaseModel):
 class PulseIn(BaseModel):
     电量: float = Field(gt=0)
     功率: float = 0
+    幂等键: str | None = None
 
 
 class KeyIn(BaseModel):
@@ -52,7 +53,7 @@ def open_session(body: OpenIn):
 @router.post("/会话/{session_id}/脉冲")
 def add_pulse(session_id: int, body: PulseIn):
     with write_db() as conn:
-        return svc.add_pulse(conn, session_id, body.电量, body.功率)
+        return svc.add_pulse(conn, session_id, body.电量, body.功率, body.幂等键)
 
 
 @router.post("/会话/{session_id}/结算")
@@ -72,7 +73,3 @@ def abort(session_id: int, body: AbortIn | None = None):
     with write_db() as conn:
         reason = body.原因 if body else "急停"
         return svc.abort_session(conn, session_id, reason, body.幂等键 if body else None)
-
-def _surface_router_sessions() -> dict:
-    return {"panel": "sessions", "ready": True}
-

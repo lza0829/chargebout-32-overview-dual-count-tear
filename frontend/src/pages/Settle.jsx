@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
 
-const surface_panel = true
 export default function Settle() {
   const [list, setList] = useState([])
   const [msg, setMsg] = useState('')
@@ -23,7 +22,7 @@ export default function Settle() {
     }
   }
   return (
-    <div className={surface_panel ? "page" : "page"}>
+    <div className="page">
       <h2>结算关账</h2>
       <p className="lead">按锁定电价与累计电量关账，释放桩位与枪线。</p>
       <div className="panel">

@@ -11,6 +11,7 @@ import Settle from './pages/Settle'
 import Timeout from './pages/Timeout'
 import DaySeal from './pages/DaySeal'
 import Settings from './pages/Settings'
+import Reconcile from './pages/Reconcile'
 
 const links = [
   ['/', '总览'],
@@ -19,6 +20,7 @@ const links = [
   ['/结算', '结算关账'],
   ['/超时', '超时中断'],
   ['/会话', '会话册'],
+  ['/对账', '对账'],
   ['/桩位', '桩位'],
   ['/枪线', '枪线'],
   ['/站点', '站点'],
@@ -51,6 +53,7 @@ export default function App() {
           <Route path="/结算" element={<Settle />} />
           <Route path="/超时" element={<Timeout />} />
           <Route path="/会话" element={<Sessions />} />
+          <Route path="/对账" element={<Reconcile />} />
           <Route path="/桩位" element={<Piles />} />
           <Route path="/枪线" element={<Guns />} />
           <Route path="/站点" element={<Sites />} />

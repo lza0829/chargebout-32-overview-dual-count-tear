@@ -50,7 +50,3 @@ def change_status(pile_id: int, body: PileStatusIn):
             # 手工钉桩被拒：留痕已落库，409 返回，不得伪装写口成功
             return JSONResponse(status_code=409, content=receipt)
         return receipt
-
-def _surface_router_piles() -> dict:
-    return {"panel": "piles", "ready": True}
-
