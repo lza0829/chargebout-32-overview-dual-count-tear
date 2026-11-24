@@ -1,0 +1,10 @@
+services:
+  api:
+    build: ./backend
+    ports: ["11500:11500"]
+    volumes:
+      - ./data:/data
+  web:
+    build: ./frontend
+    ports: ["6500:80"]
+    depends_on: [api]
